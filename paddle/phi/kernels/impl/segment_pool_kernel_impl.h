@@ -47,7 +47,7 @@ void SegmentKernelLaunchHelper(const Context& dev_ctx,
     auto dims = x.dims();
     auto* segment_ids_ptr = segment_ids.data<IndexT>();
     dims[0] =
-        static_cast<int64_t>(segment_ids_ptr[segment_ids.numel() - 1] + 1);
+        (num_indices > 0) ? static_cast<int64_t>(segment_ids_ptr[segment_ids.numel() - 1] + 1) : 0;
     PADDLE_ENFORCE_GT(
         dims[0],
         0,
@@ -80,13 +80,14 @@ void SegmentKernelLaunchHelper(const Context& dev_ctx,
                                           cudaMemcpyDeviceToHost));
 #endif
 
-    IndexT length_host = length_data[0];
-    length_host++;
-    PADDLE_ENFORCE_GT(
-        length_host,
-        0,
-        common::errors::InvalidArgument(
-            "Segment ids must be >= 0, but got last id %d", length_data[0]));
+    IndexT length_host = (num_indices > 0) ? length_data[0] + 1 : 0;
+    if (num_indices > 0) {
+      PADDLE_ENFORCE_GT(
+          length_host,
+          0,
+          common::errors::InvalidArgument(
+              "Segment ids must be >= 0, but got last id %d", length_host));
+    }
     auto dims = x.dims();
     dims[0] = static_cast<int64_t>(length_host);
     out->Resize({dims});
