@@ -36,7 +36,7 @@ class CopyMatrixRowsFunctor {
   // The indexed rows are based on the input index.
   void operator()(const DeviceContext& dev_ctx,
                   const DenseTensor& src,
-                  phi::Vector<size_t> index_lod,
+                  Vector<size_t> index_lod,
                   DenseTensor* dst,
                   bool is_src_index);
 };
@@ -129,7 +129,7 @@ class DenseTensor2BatchFunctor {
     // The max_seqlen represents batch size after rearranging the
     // input DenseTensor. It is also the maximum length of input sequence.
 
-    phi::LegacyLoD batch_lods;
+    LegacyLoD batch_lods;
     batch_lods.emplace_back(std::vector<size_t>{0});
     batch_lods.emplace_back(std::vector<size_t>{0});
     batch_lods.emplace_back(std::vector<size_t>{0});

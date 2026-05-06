@@ -66,7 +66,7 @@ struct SequenceSoftmaxGradFunctor<GPUContext, T> {
   void operator()(const GPUContext &dev_ctx,
                   const DenseTensor &dout,
                   const DenseTensor &out,
-                  const phi::Vector<size_t> &ref_lod, /*referenced lod*/
+                  const Vector<size_t> &ref_lod, /*referenced lod*/
                   DenseTensor *dx) {
     size_t height = ref_lod.size() - 1;
 
@@ -78,7 +78,7 @@ struct SequenceSoftmaxGradFunctor<GPUContext, T> {
     dim3 block_size(thread_x);
     dim3 grid_size(max_blocks);
 
-    phi::MixVector<size_t> mixv_ref_lod(&ref_lod);
+    MixVector<size_t> mixv_ref_lod(&ref_lod);
     sequence_softmax_grad_kernel<T, kThreadsPerBlock>
         <<<grid_size, block_size, 0, dev_ctx.stream()>>>(
             dout.data<T>(),

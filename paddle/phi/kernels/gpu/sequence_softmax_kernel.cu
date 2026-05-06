@@ -78,7 +78,7 @@ template <typename T>
 struct SequenceSoftmaxFunctor<GPUContext, T> {
   void operator()(const GPUContext &dev_ctx,
                   const DenseTensor &x,
-                  const phi::Vector<size_t> &ref_lod, /*referenced lod*/
+                  const Vector<size_t> &ref_lod, /*referenced lod*/
                   DenseTensor *out) {
     int height = ref_lod.size() - 1;
 
@@ -89,7 +89,7 @@ struct SequenceSoftmaxFunctor<GPUContext, T> {
 
     dim3 block_size(thread_x);
     dim3 grid_size(max_blocks);
-    phi::MixVector<size_t> mixv_ref_lod(&ref_lod);
+    MixVector<size_t> mixv_ref_lod(&ref_lod);
     sequence_softmax_kernel<T, kThreadsPerBlock>
         <<<grid_size, block_size, 0, dev_ctx.stream()>>>(
             x.data<T>(),

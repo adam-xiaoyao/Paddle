@@ -51,11 +51,11 @@ template <typename T>
 struct SequenceExpandGradFunctor<GPUContext, T> {
   void operator()(const GPUContext& dev_ctx,
                   const DenseTensor& dout,
-                  const phi::Vector<size_t>& x_lod,   /*expand source lod*/
-                  const phi::Vector<size_t>& ref_lod, /*expand based lod*/
+                  const Vector<size_t>& x_lod,   /*expand source lod*/
+                  const Vector<size_t>& ref_lod, /*expand based lod*/
                   DenseTensor* dx) {
     int x_item_length = common::product(dx->dims()) / dx->dims()[0];
-    phi::Vector<size_t> out_offset(x_lod.size());
+    Vector<size_t> out_offset(x_lod.size());
     GetOutputOffset(x_lod, ref_lod, &out_offset);
     // big tensor currently not supported
     PADDLE_ENFORCE_LE(ref_lod.size(),
@@ -71,9 +71,9 @@ struct SequenceExpandGradFunctor<GPUContext, T> {
     int block_x = static_cast<int>(ref_lod.size());
     dim3 block_size(thread_x, thread_y, thread_z);
     dim3 grid_size(block_x, 1);
-    phi::MixVector<size_t> mixv_ref_lod(&ref_lod);
-    phi::MixVector<size_t> mixv_x_lod(&x_lod);
-    phi::MixVector<size_t> mixv_out_offset(&out_offset);
+    MixVector<size_t> mixv_ref_lod(&ref_lod);
+    MixVector<size_t> mixv_x_lod(&x_lod);
+    MixVector<size_t> mixv_out_offset(&out_offset);
     sequence_expand_grad_kernel<<<grid_size, block_size, 0, dev_ctx.stream()>>>(
         dout.data<T>(),
         mixv_ref_lod.CUDAData(dev_ctx.GetPlace()),
