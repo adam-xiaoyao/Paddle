@@ -114,6 +114,10 @@ class AdamW(Optimizer):
         name (str|None, optional): Normally there is no need for user to set this property.
             For more information, please refer to :ref:`api_guide_Name`.
             The default value is None.
+
+    Keyword Args:
+        maximize (bool, optional): Maximize the objective with respect to the params, instead of minimizing. The default value is False.
+
     Notes:
         **Currently, AdamW doesn't support sparse parameter optimization.**
 
@@ -194,6 +198,8 @@ class AdamW(Optimizer):
         multi_precision: bool = False,
         amsgrad: bool = False,
         name: str | None = None,
+        *,
+        maximize: bool = False,
     ) -> None:
         assert learning_rate is not None
         assert beta1 is not None
@@ -295,6 +301,7 @@ class AdamW(Optimizer):
         self._lazy_mode = lazy_mode
         self._multi_precision = multi_precision
         self._master_weights = {}
+        self._maximize = maximize
         # whether to use AMSGrad
         self._amsgrad = amsgrad
 
@@ -335,6 +342,9 @@ class AdamW(Optimizer):
             return self._auxiliary_vars[key]
         else:
             return None
+
+    def get_lr_dtype(self) -> paddle.dtype:
+        return paddle.float64
 
     def _add_param_group(self, param_group):
         """
@@ -519,17 +529,6 @@ class AdamW(Optimizer):
                 if self._lr_ratio is None
                 else self._lr_ratio(param_and_grad[0])
             )
-
-            # Note: Since the data type of lr is constructed within the optimizer class, modifying it would have a significant impact. Therefore, this method is used to bypass it.
-            # Paddle stores lr as float32 tensor, losing ~7 digits
-            # of precision. PyTorch passes lr as double. The kernel computes
-            # lr_double = float32(lr_tensor) * lr_ratio, so we adjust lr_ratio
-            # to compensate: lr_ratio *= (double_lr / float32_lr).
-            if paddle.in_dynamic_mode():
-                current_lr = float(self.get_lr())
-                lr_f32 = float(lr.item())
-                if lr_f32 != 0.0:
-                    lr_ratio_ = lr_ratio_ * (current_lr / lr_f32)
 
             _beta1 = (
                 self._beta1
@@ -727,7 +726,10 @@ class AdamW(Optimizer):
                             raise RuntimeError(
                                 "AdamW don't support weight_decay with sparse parameters, please set it to None."
                             )
-                    params_grads.append((param, grad_var))
+                    if self._maximize is True:
+                        params_grads.append((param, -grad_var))
+                    else:
+                        params_grads.append((param, grad_var))
 
             optimize_ops = self._apply_optimize(
                 loss=None, startup_program=None, params_grads=params_grads
@@ -759,7 +761,10 @@ class AdamW(Optimizer):
                                 raise RuntimeError(
                                     "AdamW don't support weight_decay with sparse parameters, please set it to None."
                                 )
-                        params_grads['params'].append((param, grad_var))
+                        if self._maximize is True:
+                            params_grads['params'].append((param, -grad_var))
+                        else:
+                            params_grads['params'].append((param, grad_var))
                 params_grads.update(
                     {k: v for k, v in param_group.items() if k != 'params'}
                 )

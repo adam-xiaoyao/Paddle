@@ -19,12 +19,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <vector>
 
 #include "paddle/phi/kernels/funcs/math_function.h"
-
-#define INT_MAX_VALUE 2147483647
 
 namespace phi {
 namespace funcs {
@@ -46,35 +45,16 @@ template <typename T>
 struct CBlas;
 
 template <>
-struct CBlas<int8_t> {
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "Blas VCOPY do not supported on CPU, please check your code"));
-  }
-};
+struct CBlas<int8_t> {};
 
 template <>
-struct CBlas<int16_t> {
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "Blas VCOPY do not supported on CPU, please check your code"));
-  }
-};
+struct CBlas<int16_t> {};
 
 template <>
 struct CBlas<phi::bfloat16> {
   template <typename... ARGS>
   static void AXPY(ARGS... args) {
     detail::axpy(args...);
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args UNUSED) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "Blas VCOPY do not supported on CPU with bfloat16,"
-        " please check your code"));
   }
 
   template <typename... ARGS>
@@ -149,11 +129,6 @@ struct CBlas<float> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_scopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     phi::dynload::cblas_sgemv(args...);
   }
@@ -161,11 +136,6 @@ struct CBlas<float> {
   template <typename... ARGS>
   static float DOT(ARGS... args) {
     return phi::dynload::cblas_sdot(args...);
-  }
-
-  template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    phi::dynload::cblas_sscal(args...);
   }
 
   template <typename... ARGS>
@@ -275,11 +245,6 @@ struct CBlas<double> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_dcopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     phi::dynload::cblas_dgemv(args...);
   }
@@ -287,11 +252,6 @@ struct CBlas<double> {
   template <typename... ARGS>
   static double DOT(ARGS... args) {
     return phi::dynload::cblas_ddot(args...);
-  }
-
-  template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    phi::dynload::cblas_dscal(args...);
   }
 
   template <typename... ARGS>
@@ -371,11 +331,6 @@ struct CBlas<phi::complex64> {
                    phi::complex64 *Y,
                    const int incY) {
     phi::dynload::cblas_caxpy(n, &alpha, X, incX, Y, incY);
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_ccopy(args...);
   }
 
   // the libmklml_intel.so paddle used has no vcAdd, vcSub,
@@ -569,11 +524,6 @@ struct CBlas<phi::complex128> {
                    phi::complex128 *Y,
                    const int incY) {
     phi::dynload::cblas_zaxpy(n, &alpha, X, incX, Y, incY);
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_zcopy(args...);
   }
 
   // the libmklml_intel.so paddle used has no vzAdd, vzSub,
@@ -771,11 +721,6 @@ struct CBlas<float> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_scopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     phi::dynload::cblas_sgemv(args...);
   }
@@ -783,11 +728,6 @@ struct CBlas<float> {
   template <typename... ARGS>
   static float DOT(ARGS... args) {
     return phi::dynload::cblas_sdot(args...);
-  }
-
-  template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    phi::dynload::cblas_sscal(args...);
   }
 
   template <typename... ARGS>
@@ -859,11 +799,6 @@ struct CBlas<double> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_dcopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     phi::dynload::cblas_dgemv(args...);
   }
@@ -871,11 +806,6 @@ struct CBlas<double> {
   template <typename... ARGS>
   static double DOT(ARGS... args) {
     return phi::dynload::cblas_ddot(args...);
-  }
-
-  template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    phi::dynload::cblas_dscal(args...);
   }
 
   template <typename... ARGS>
@@ -944,11 +874,6 @@ struct CBlas<phi::complex64> {
                    phi::complex64 *Y,
                    const int incY) {
     phi::dynload::cblas_caxpy(n, &alpha, X, incX, Y, incY);
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_ccopy(args...);
   }
 
   template <typename... ARGS>
@@ -1117,11 +1042,6 @@ struct CBlas<phi::complex128> {
                    phi::complex128 *Y,
                    const int incY) {
     phi::dynload::cblas_zaxpy(n, &alpha, X, incX, Y, incY);
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    phi::dynload::cblas_zcopy(args...);
   }
 
   template <typename... ARGS>
@@ -1295,11 +1215,6 @@ struct CBlas<float> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    cblas_scopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     cblas_sgemv(args...);
   }
@@ -1323,11 +1238,6 @@ struct CBlas<double> {
   }
 
   template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    cblas_dcopy(args...);
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     cblas_dgemv(args...);
   }
@@ -1340,11 +1250,6 @@ struct CBlas<double> {
 
 template <>
 struct CBlas<phi::complex64> {
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    cblas_ccopy(args...);
-  }
-
   template <typename... ARGS>
   static void AXPY(int n,
                    const phi::complex64 alpha,
@@ -1408,11 +1313,6 @@ struct CBlas<phi::complex64> {
 
 template <>
 struct CBlas<phi::complex128> {
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    cblas_zcopy(args...);
-  }
-
   template <typename... ARGS>
   static void AXPY(int n,
                    const phi::complex128 alpha,
@@ -1507,10 +1407,6 @@ struct CBlas<phi::float16> {
     PADDLE_THROW(common::errors::Unimplemented(
         "float16 DOT not supported on CPU, please check your code"));
   };
-  static void SCAL(...) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "float16 SCAL not supported on CPU, please check your code"));
-  };
   static void ASUM(...) {
     PADDLE_THROW(common::errors::Unimplemented(
         "float16 ASUM not supported on CPU, please check your code"));
@@ -1590,14 +1486,23 @@ void Blas<CPUContext>::GEMM(CBLAS_TRANSPOSE transA,
                             const T *B,
                             T beta,
                             T *C) const {
-  if (M > INT_MAX_VALUE || N > INT_MAX_VALUE || K > INT_MAX_VALUE) {
-    PADDLE_THROW(
-        common::errors::Unimplemented("GEMM not supported for large tensor "
-                                      "size on CPU, please check your code!"));
+  if (M > std::numeric_limits<int>::max() ||
+      N > std::numeric_limits<int>::max() ||
+      K > std::numeric_limits<int>::max()) {
+    PADDLE_THROW(common::errors::Unimplemented(
+        "CPU GEMM only supports M, N and K not larger than INT_MAX. "
+        "Expected M <= %d, N <= %d and K <= %d, but received M = %ld, "
+        "N = %ld, K = %ld.",
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        M,
+        N,
+        K));
   }
-  int lda = (transA == CblasNoTrans) ? K : M;
-  int ldb = (transB == CblasNoTrans) ? N : K;
-  int ldc = N;
+  int lda = static_cast<int>((transA == CblasNoTrans) ? K : M);
+  int ldb = static_cast<int>((transB == CblasNoTrans) ? N : K);
+  int ldc = static_cast<int>(N);
   CBlas<T>::GEMM(CblasRowMajor,
                  transA,
                  transB,
@@ -1626,14 +1531,23 @@ void Blas<CPUContext>::GEMM(CBLAS_TRANSPOSE transA,
                             const T *B,
                             U beta,
                             T *C) const {
-  if (M > INT_MAX_VALUE || N > INT_MAX_VALUE || K > INT_MAX_VALUE) {
-    PADDLE_THROW(
-        common::errors::Unimplemented("GEMM not supported for large tensor "
-                                      "size on CPU, please check your code!"));
+  if (M > std::numeric_limits<int>::max() ||
+      N > std::numeric_limits<int>::max() ||
+      K > std::numeric_limits<int>::max()) {
+    PADDLE_THROW(common::errors::Unimplemented(
+        "CPU GEMM only supports M, N and K not larger than INT_MAX. "
+        "Expected M <= %d, N <= %d and K <= %d, but received M = %ld, "
+        "N = %ld, K = %ld.",
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        M,
+        N,
+        K));
   }
-  int lda = (transA == CblasNoTrans) ? K : M;
-  int ldb = (transB == CblasNoTrans) ? N : K;
-  int ldc = N;
+  int lda = static_cast<int>((transA == CblasNoTrans) ? K : M);
+  int ldb = static_cast<int>((transB == CblasNoTrans) ? N : K);
+  int ldc = static_cast<int>(N);
   CBlas<T>::GEMM(CblasRowMajor,
                  transA,
                  transB,
@@ -1741,9 +1655,13 @@ void Blas<DeviceContext>::MatMul(const DenseTensor &mat_a,
                                       "should be same, please check your "
                                       "code."));
 
-  int M = dim_out[0];
-  int N = dim_out[1];
-  int K = !trans_a ? dim_a[1] : dim_a[0];
+  const int64_t K_64 = !trans_a ? dim_a[1] : dim_a[0];
+  PADDLE_ENFORCE_LE_INT_MAX(dim_out[0], "dim_out[0]");
+  PADDLE_ENFORCE_LE_INT_MAX(dim_out[1], "dim_out[1]");
+  PADDLE_ENFORCE_LE_INT_MAX(K_64, "cblas GEMM K");
+  int M = static_cast<int>(dim_out[0]);
+  int N = static_cast<int>(dim_out[1]);
+  int K = static_cast<int>(K_64);
 
   CBLAS_TRANSPOSE transA = !trans_a ? CblasNoTrans : CblasTrans;
   CBLAS_TRANSPOSE transB = !trans_b ? CblasNoTrans : CblasTrans;
@@ -1768,12 +1686,6 @@ void Blas<CPUContext>::AXPY(int n, T alpha, const T *x, T *y) const {
 
 template <>
 template <typename T>
-void Blas<CPUContext>::VCOPY(int n, const T *x, T *y) const {
-  CBlas<T>::VCOPY(n, x, 1, y, 1);
-}
-
-template <>
-template <typename T>
 void Blas<CPUContext>::VADD(int n, const T *x, const T *y, T *z) const {
 #if defined(PADDLE_WITH_MKLML) || defined(PADDLE_WITH_HML)
   CBlas<T>::VADD(n, x, y, z);
@@ -1781,7 +1693,9 @@ void Blas<CPUContext>::VADD(int n, const T *x, const T *y, T *z) const {
   if (x == z) {
     this->template AXPY<T>(n, (T)(1.), y, z);
   } else {
-    this->template VCOPY<T>(n, y, z);
+    if (y != z) {
+      std::memcpy(z, y, n * sizeof(T));
+    }
     this->template AXPY<T>(n, (T)(1.), x, z);
   }
 #endif
@@ -1880,19 +1794,6 @@ T Blas<CPUContext>::DOT(int n, const T *x, const T *y) const {
 
 template <>
 template <typename T>
-void Blas<CPUContext>::SCAL(int n, const T a, T *x) const {
-#if defined(PADDLE_WITH_MKLML) || defined(PADDLE_WITH_HML)
-  CBlas<T>::SCAL(n, a, x, 1);
-#else
-  // try to find if openblas support cblas_scal
-  for (int i = 0; i < n; ++i) {
-    x[i] = a * x[i];
-  }
-#endif
-}
-
-template <>
-template <typename T>
 T Blas<CPUContext>::ASUM(int n, T *x, int inc) const {
   auto sum = static_cast<T>(0.0);
 #if defined(PADDLE_WITH_MKLML) || defined(PADDLE_WITH_HML)
@@ -1942,20 +1843,33 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
   PADDLE_ENFORCE_NOT_NULL(
       C, common::errors::InvalidArgument("Pointer C should not be null."));
 
-  if (M > INT_MAX_VALUE || N > INT_MAX_VALUE || K > INT_MAX_VALUE) {
-    PADDLE_THROW(
-        common::errors::Unimplemented("CPU GEMM not supported for large tensor "
-                                      "size."));
+  if (M > std::numeric_limits<int>::max() ||
+      N > std::numeric_limits<int>::max() ||
+      K > std::numeric_limits<int>::max() ||
+      batchCount > std::numeric_limits<int>::max()) {
+    PADDLE_THROW(common::errors::Unimplemented(
+        "CPU BatchedGEMM only supports M, N, K and batchCount not larger "
+        "than INT_MAX. Expected M <= %d, N <= %d, K <= %d and "
+        "batchCount <= %d, but received M = %ld, N = %ld, K = %ld, "
+        "batchCount = %ld.",
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        std::numeric_limits<int>::max(),
+        M,
+        N,
+        K,
+        batchCount));
   }
 
 #if defined(PADDLE_WITH_MKLML) || defined(PADDLE_WITH_HML)
-  if (batchCount > INT_MAX_VALUE) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "CPU GEMM not supported for large batch size in MKLML."));
-  }
-  int lda = (transA == CblasNoTrans) ? K : M;
-  int ldb = (transB == CblasNoTrans) ? N : K;
-  int ldc = N;
+  int M_int = static_cast<int>(M);
+  int N_int = static_cast<int>(N);
+  int K_int = static_cast<int>(K);
+  int batch_count_int = static_cast<int>(batchCount);
+  int lda = (transA == CblasNoTrans) ? K_int : M_int;
+  int ldb = (transB == CblasNoTrans) ? N_int : K_int;
+  int ldc = N_int;
   auto a_array = std::vector<const T *>(batchCount);
   auto b_array = std::vector<const T *>(batchCount);
   auto c_array = std::vector<T *>(batchCount);
@@ -1967,9 +1881,9 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
   CBlas<T>::GEMM_BATCH(CblasRowMajor,
                        &transA,
                        &transB,
-                       reinterpret_cast<int *>(&M),
-                       reinterpret_cast<int *>(&N),
-                       reinterpret_cast<int *>(&K),
+                       &M_int,
+                       &N_int,
+                       &K_int,
                        &alpha,
                        a_array.data(),
                        &lda,
@@ -1979,7 +1893,7 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
                        c_array.data(),
                        &ldc,
                        1 /* group_count */,
-                       reinterpret_cast<int *>(&batchCount));
+                       &batch_count_int);
 #else
   for (int64_t k = 0; k < batchCount; ++k) {
     auto *Ak = &A[k * strideA];
@@ -2020,19 +1934,23 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
       B, common::errors::InvalidArgument("Pointer B should not be null."));
   PADDLE_ENFORCE_NOT_NULL(
       C, common::errors::InvalidArgument("Pointer C should not be null."));
-  if (M > INT_MAX_VALUE || N > INT_MAX_VALUE || K > INT_MAX_VALUE) {
+  if (M > std::numeric_limits<int>::max() ||
+      N > std::numeric_limits<int>::max() ||
+      K > std::numeric_limits<int>::max() ||
+      batchCount > std::numeric_limits<int>::max()) {
     PADDLE_THROW(common::errors::Unimplemented(
-        "CPU GEMM not supported for large tensor size"));
+        "CPU BatchedGEMM does not support M, N, K or batchCount larger than "
+        "INT_MAX."));
   }
 
 #if defined(PADDLE_WITH_MKLML) || defined(PADDLE_WITH_HML)
-  if (batchCount > INT_MAX_VALUE) {
-    PADDLE_THROW(common::errors::Unimplemented(
-        "CPU GEMM not supported for large batch size in MKLML."));
-  }
-  int lda = (transA == CblasNoTrans) ? K : M;
-  int ldb = (transB == CblasNoTrans) ? N : K;
-  int ldc = N;
+  int M_int = static_cast<int>(M);
+  int N_int = static_cast<int>(N);
+  int K_int = static_cast<int>(K);
+  int batch_count_int = static_cast<int>(batchCount);
+  int lda = (transA == CblasNoTrans) ? K_int : M_int;
+  int ldb = (transB == CblasNoTrans) ? N_int : K_int;
+  int ldc = N_int;
   auto a_array = std::vector<const T *>(batchCount);
   auto b_array = std::vector<const T *>(batchCount);
   auto c_array = std::vector<T *>(batchCount);
@@ -2045,9 +1963,9 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
   CBlas<T>::GEMM_BATCH(CblasRowMajor,
                        &transA,
                        &transB,
-                       reinterpret_cast<int *>(&M),
-                       reinterpret_cast<int *>(&N),
-                       reinterpret_cast<int *>(&K),
+                       &M_int,
+                       &N_int,
+                       &K_int,
                        &alpha,
                        a_array.data(),
                        &lda,
@@ -2057,7 +1975,7 @@ void Blas<CPUContext>::BatchedGEMM(CBLAS_TRANSPOSE transA,
                        c_array.data(),
                        &ldc,
                        1 /* group_count */,
-                       reinterpret_cast<int *>(&batchCount));
+                       &batch_count_int);
 #else
   for (int64_t k = 0; k < batchCount; ++k) {
     auto *Ak = &A[k * strideA];

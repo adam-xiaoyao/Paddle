@@ -841,8 +841,8 @@ void DecodeJpegInferMeta(const MetaTensor& x,
   } else if (mode == "rgb") {
     out_dims = {3, -1, -1};
   } else {
-    errors::Fatal("The provided mode is not supported for JPEG files on GPU: ",
-                  mode);
+    errors::Fatal(
+        "The provided mode is not supported for JPEG files on GPU: %s", mode);
   }
   if (out != nullptr) {
     out->set_dims(make_ddim(out_dims));
@@ -2158,12 +2158,6 @@ void Fp8QuantBlockwiseInferMeta(const MetaTensor& X,
 
   const int64_t rows = x_dims[0];
   const int64_t cols = x_dims[1];
-  PADDLE_ENFORCE_LE(rows,
-                    65535 * 128,
-                    common::errors::InvalidArgument(
-                        "Currently only supports the first dim of "
-                        "Input(X) <= 65535 * 128, but got %d",
-                        rows));
 
   PADDLE_ENFORCE_EQ(
       cols % 4,
@@ -4865,7 +4859,7 @@ void ViewSliceInferMeta(const MetaTensor& input,
       begin_idx,
       0,
       common::errors::OutOfRange("The start row index must be greater than 0."
-                                 "But received the start index is d%.",
+                                 "But received the start index is %d.",
                                  begin_idx));
   PADDLE_ENFORCE_LE(
       end_idx,

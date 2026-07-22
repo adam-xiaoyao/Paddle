@@ -260,6 +260,12 @@ PYBIND11_MAKE_OPAQUE(paddle::framework::FetchUnmergedList);
 PYBIND11_MAKE_OPAQUE(paddle::framework::FetchList);
 PYBIND11_MAKE_OPAQUE(paddle::framework::FetchType);
 
+// Opaque type for AllBlockInfoOfAllocator — avoid full O(n) conversion
+// at pybind boundary; only convert on per-group access (__getitem__).
+using AllBlocksInfoType =
+    std::vector<std::vector<std::tuple<size_t, uintptr_t, bool>>>;
+PYBIND11_MAKE_OPAQUE(AllBlocksInfoType);
+
 DECLARE_FILE_SYMBOLS(init_phi);
 DECLARE_FILE_SYMBOLS(kernel_dialect);
 #ifdef PADDLE_WITH_DISTRIBUTE
@@ -479,16 +485,17 @@ bool IsCompiledWithDIST() {
 }
 
 struct iinfo {
-  int64_t min, max;
+  int64_t min;
+  uint64_t max;
   int bits;
   std::string dtype;
 
-#define CASE_IINFO_BODY(type, ctype)         \
-  do {                                       \
-    min = std::numeric_limits<ctype>::min(); \
-    max = std::numeric_limits<ctype>::max(); \
-    bits = sizeof(ctype) * 8;                \
-    dtype = #type;                           \
+#define CASE_IINFO_BODY(type, ctype)                                \
+  do {                                                              \
+    min = static_cast<int64_t>(std::numeric_limits<ctype>::min());  \
+    max = static_cast<uint64_t>(std::numeric_limits<ctype>::max()); \
+    bits = sizeof(ctype) * 8;                                       \
+    dtype = #type;                                                  \
   } while (0)
 
   explicit iinfo(const DataType &type) {
@@ -520,7 +527,8 @@ struct iinfo {
       default:
         PADDLE_THROW(common::errors::InvalidArgument(
             "the argument of paddle.iinfo can only be paddle.int8, "
-            "paddle.int16, paddle.int32, paddle.int64, or paddle.uint8"));
+            "paddle.int16, paddle.int32, paddle.int64, paddle.uint8, "
+            "paddle.uint16, paddle.uint32, or paddle.uint64"));
         break;
     }
   }
@@ -1615,8 +1623,11 @@ PYBIND11_MODULE(libpaddle, m) {
 
   py::class_<iinfo>(m, "iinfo")
       .def(py::init<const DataType &>())
-      .def_readonly("min", &iinfo::min)
-      .def_readonly("max", &iinfo::max)
+      .def_property_readonly("min",
+                             [](const iinfo &a) { return py::int_(a.min); })
+      .def_property_readonly(
+          "max",
+          [](const iinfo &a) { return py::cast(static_cast<uint64_t>(a.max)); })
       .def_readonly("bits", &iinfo::bits)
       .def_readonly("dtype", &iinfo::dtype)
       .def("__repr__", [](const iinfo &a) {
@@ -3713,6 +3724,7 @@ All parameter, weight, gradient are variables in Paddle.
           py::return_value_policy::take_ownership);
 
   m.def("op_support_gpu", OpSupportGPU);
+  m.def("eager_set_device_id", &EagerSetDeviceId);
 #if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
   m.def("get_cuda_device_count", platform::GetGPUDeviceCount);
   m.def("get_cuda_current_device_id", &platform::GetCurrentDeviceId);
@@ -3773,6 +3785,24 @@ All parameter, weight, gradient are variables in Paddle.
 #endif
 #endif
 #if defined(PADDLE_WITH_CUDA)
+  // Register opaque AllBlocksInfo type — lazy per-group conversion
+  py::class_<AllBlocksInfoType>(m, "AllBlocksInfo")
+      .def("__len__", &AllBlocksInfoType::size)
+      .def("__getitem__",
+           [](const AllBlocksInfoType &self,
+              int64_t i) -> std::vector<std::tuple<size_t, uintptr_t, bool>> {
+             if (i < 0) i += static_cast<int64_t>(self.size());
+             if (i < 0 || static_cast<size_t>(i) >= self.size())
+               throw py::index_error();
+             return self[i];
+           })
+      .def(
+          "__iter__",
+          [](const AllBlocksInfoType &self) {
+            return py::make_iterator(self.begin(), self.end());
+          },
+          py::keep_alive<0, 1>());
+
   m.def("vmm_max_free_size", [](int device_id) {
     return memory::VmmMaxFreeSize(GPUPlace(device_id), 1);
   });
@@ -3782,9 +3812,30 @@ All parameter, weight, gradient are variables in Paddle.
   m.def("vmm_free_block_info", [](int device_id) {
     return paddle::memory::FreeBlockInfoOfVmmAllocator(GPUPlace(device_id));
   });
-  m.def("vmm_all_block_info", [](int device_id) {
-    return paddle::memory::AllBlockInfoOfVmmAllocator(GPUPlace(device_id));
-  });
+  m.def(
+      "all_block_info",
+      [](int device_id) -> AllBlocksInfoType {
+        return paddle::memory::AllBlockInfoOfAllocator(GPUPlace(device_id));
+      },
+      py::return_value_policy::move);
+  m.def(
+      "vmm_all_block_info",
+      [](int device_id) -> AllBlocksInfoType {
+        return paddle::memory::AllBlockInfoOfAllocator(GPUPlace(device_id));
+      },
+      py::return_value_policy::move);
+  m.def(
+      "large_pool_block_info",
+      [](int device_id) -> AllBlocksInfoType {
+        return paddle::memory::LargePoolBlockInfo(GPUPlace(device_id));
+      },
+      py::return_value_policy::move);
+  m.def(
+      "small_pool_block_info",
+      [](int device_id) -> AllBlocksInfoType {
+        return paddle::memory::SmallPoolBlockInfo(GPUPlace(device_id));
+      },
+      py::return_value_policy::move);
   m.def("get_allocate_record", [](int device_id) {
     return paddle::memory::GetAllocateEvent(GPUPlace(device_id));
   });

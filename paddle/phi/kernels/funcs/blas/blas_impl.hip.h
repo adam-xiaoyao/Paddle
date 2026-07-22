@@ -44,16 +44,6 @@ struct CUBlas<float> {
   }
 
   template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_sscal(args...));
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_scopy(args...));
-  }
-
-  template <typename... ARGS>
   static void GEMV(ARGS... args) {
     PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_sgemv(args...));
   }
@@ -116,16 +106,6 @@ struct CUBlas<double> {
   template <typename... ARGS>
   static void AXPY(ARGS... args) {
     PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_daxpy(args...));
-  }
-
-  template <typename... ARGS>
-  static void SCAL(ARGS... args) {
-    PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_dscal(args...));
-  }
-
-  template <typename... ARGS>
-  static void VCOPY(ARGS... args) {
-    PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::rocblas_dcopy(args...));
   }
 
   template <typename... ARGS>
@@ -1036,9 +1016,10 @@ inline void Blas<GPUContext>::GEMM(CBLAS_TRANSPOSE transA,
           "but received %d",
           dev_ctx_.GetComputeCapability()));
 
-  thrust::complex<float> c_alpha =
-      thrust::complex<float>(alpha.real, alpha.imag);
-  thrust::complex<float> c_beta = thrust::complex<float>(beta.real, beta.imag);
+  // Use rocblas complex types directly to avoid pulling
+  // in rocprim via thrust/complex.h in non-hipcc builds.
+  rocblas_float_complex c_alpha = {alpha.real, alpha.imag};
+  rocblas_float_complex c_beta = {beta.real, beta.imag};
 
   auto &cuda_ctx = const_cast<GPUContext &>(dev_ctx_);
   CUBlas<phi::complex64>::GEMM_EX(&cuda_ctx,
@@ -1097,10 +1078,10 @@ inline void Blas<GPUContext>::GEMM(CBLAS_TRANSPOSE transA,
           "but received %d",
           dev_ctx_.GetComputeCapability()));
 
-  thrust::complex<double> c_alpha =
-      thrust::complex<double>(alpha.real, alpha.imag);
-  thrust::complex<double> c_beta =
-      thrust::complex<double>(beta.real, beta.imag);
+  // Use rocblas complex types directly to avoid pulling
+  // in rocprim via thrust/complex.h in non-hipcc builds.
+  rocblas_double_complex c_alpha = {alpha.real, alpha.imag};
+  rocblas_double_complex c_beta = {beta.real, beta.imag};
 
   auto &cuda_ctx = const_cast<GPUContext &>(dev_ctx_);
   CUBlas<phi::complex128>::GEMM_EX(&cuda_ctx,
@@ -1270,20 +1251,6 @@ void Blas<GPUContext>::AXPY(int n, T alpha, const T *x, T *y) const {
   dev_ctx_.CublasCall([&](rocblas_handle handle) {
     CUBlas<T>::AXPY(handle, n, &alpha, x, 1, y, 1);
   });
-}
-
-template <>
-template <typename T>
-void Blas<GPUContext>::SCAL(int n, const T alpha, T *x) const {
-  dev_ctx_.CublasCall(
-      [&](rocblas_handle handle) { CUBlas<T>::SCAL(handle, n, &alpha, x, 1); });
-}
-
-template <>
-template <typename T>
-void Blas<GPUContext>::VCOPY(int n, const T *x, T *y) const {
-  dev_ctx_.CublasCall(
-      [&](rocblas_handle handle) { CUBlas<T>::VCOPY(handle, n, x, 1, y, 1); });
 }
 
 template <>

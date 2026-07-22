@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,9 @@ from .optimizer import Optimizer
 # Debug logging for Muon optimizer
 _logger = logging.getLogger(__name__)
 MUON_DEBUG = os.environ.get("MUON_DEBUG", "0") == "1"
+g_shard_bypass_dygraph_optimizer = int(
+    os.environ.get("FLAGS_shard_bypass_dygraph_optimizer", 0)
+)
 
 __all__ = []
 
@@ -106,6 +110,9 @@ _NS_COEFFICIENT_SETS = {
         (2.7573, -3.2939, 1.4254),
         (2.7215, -3.0494, 1.3169),
     ],
+    "deepseekv4":
+    # From DeepSeekV4: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/resolve/main/DeepSeek_V4.pdf
+    [(3.4445, -4.7750, 2.0315)] * 8 + [(2.0, -1.5, 0.5)] * 2,
 }
 
 # ------------------------------------------------------------------
@@ -147,6 +154,15 @@ def _default_should_use_muon(name, shape, exclude_patterns):
     return True
 
 
+def _to_hashable(value):
+    """Recursively convert lists/tuples/dicts into hashable tuples."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_to_hashable(v) for v in value)
+    if isinstance(value, dict):
+        return tuple((k, _to_hashable(v)) for k, v in sorted(value.items()))
+    return value
+
+
 class Muon(Optimizer):
     r"""
     Muon optimizer for MuonShardingOptimizer (Sharding Stage1 V3) usage.
@@ -168,6 +184,13 @@ class Muon(Optimizer):
         adam_beta2 (float): β₂ for the AdamW fallback. Default: ``0.95``.
         weight_decay (float): Decoupled weight decay. Default: ``0.01``.
         ns_steps (int): Newton-Schulz iteration steps. Default: ``5``.
+        ns_coeff_type (str): Preset name for Newton-Schulz coefficients.
+            Options: ``"simple"``, ``"quintic"``, ``"polar_express"``,
+            ``"aol"``, ``"deepseekv4"``, ``"custom"``. Default: ``"simple"``.
+        ns_coeffs (list[tuple[float, float, float]] | None): Custom
+            Newton-Schulz coefficient set. Each tuple is ``(a, b, c)``
+            for one iteration step. Default: ``None``.
+            Only used when ns_coeff_type=``custom``.
         nesterov (bool): Use Nesterov momentum in Muon. Default: ``True``.
         adam_epsilon (float): ε for numerical stability in AdamW. Default: ``1e-9``.
         grad_clip (GradientClipBase | None): Gradient clipping. Default: ``None``.
@@ -185,11 +208,6 @@ class Muon(Optimizer):
             dict mapping param name to :class:`MuonParamInfo` (use_muon,
             split_concat_func). Built by Trainer and passed in.
             Default: ``None``.
-        muon_slice_config (dict | None): Declarative slice configuration mapping
-            param name to (slice_fn, slice_kwargs) tuple. Built by model's
-            _build_muon_slice_config method and passed in. This allows slice
-            strategies to be defined in the model configuration rather than
-            hard-coded in the optimizer. Default: ``None``.
         ns_matmul_dtype (paddle.dtype | None): Dtype for Newton-Schulz matmul
             iterations. ``None`` = auto-detect: bfloat16 on Ampere+ (capability
             >= 8.0), float32 on V100 and older. Pass ``paddle.float32``
@@ -214,6 +232,7 @@ class Muon(Optimizer):
         weight_decay=0.01,
         ns_steps=5,
         ns_coeff_type="simple",
+        ns_coeffs=None,
         nesterov=True,
         adam_epsilon=1e-9,
         grad_clip=None,
@@ -274,6 +293,16 @@ class Muon(Optimizer):
         self._muon_exclude_patterns = muon_exclude_patterns
         self._muon_extra_scale_factor = muon_extra_scale_factor
         self._ns_coeff_type = ns_coeff_type
+        if ns_coeff_type == "custom":
+            assert ns_coeffs is not None, (
+                "ns_coeffs must be provided when ns_coeff_type is 'custom'."
+            )
+            self._ns_coeffs = ns_coeffs
+        else:
+            assert ns_coeff_type in _NS_COEFFICIENT_SETS, (
+                f"Invalid ns_coeff_type: {ns_coeff_type}"
+            )
+            self._ns_coeffs = _NS_COEFFICIENT_SETS[ns_coeff_type]
         self._muon_param_info_map = muon_param_info_map or {}
         # Dtype for Newton-Schulz matmul.
         # None = auto: bfloat16 on Ampere+ (capability >= 8.0), float32 on older.
@@ -364,27 +393,37 @@ class Muon(Optimizer):
         X,
         steps=5,
         eps=1e-9,
-        ns_coeff_type="simple",
+        ns_coeffs=None,
         ns_matmul_dtype=paddle.bfloat16,
     ):
         """Approximate the matrix sign function via Newton-Schulz iteration.
 
         Args:
-            X: Input tensor to orthogonalize.
+            X: Input tensor to orthogonalize. Must be 2D (M, N) or
+                3D (B, M, N) for batched operation.
             steps: Number of Newton-Schulz iterations.
             eps: Small constant for numerical stability.
-            ns_coeff_type: Type of coefficient set to use.
-                Options: "simple", "quintic", "polar_express", "aol".
+            ns_coeffs: List of (a, b, c) coefficient tuples for iteration.
+                If None, uses the "simple" preset.
             ns_matmul_dtype: Dtype for matmul iterations. Defaults to
                 bfloat16. Pass paddle.float32 for V100 compatibility.
         """
-        # Get coefficient set
-        coeff_sets = _NS_COEFFICIENT_SETS.get(
-            ns_coeff_type, _NS_COEFFICIENT_SETS["simple"]
+        if X.ndim < 2 or X.ndim > 3:
+            raise ValueError(
+                f"Input tensor X must be 2D or 3D (batched), got {X.ndim}D"
+            )
+
+        coeff_sets = (
+            ns_coeffs
+            if ns_coeffs is not None
+            else _NS_COEFFICIENT_SETS["simple"]
         )
 
         if X.shape[-2] > X.shape[-1]:
-            X = X.T
+            X = paddle.transpose(
+                X,
+                perm=[1, 0] if X.ndim == 2 else [0, 2, 1],
+            )
             transpose = True
         else:
             transpose = False
@@ -396,19 +435,39 @@ class Muon(Optimizer):
         )
         X = X_flat.reshape(orig_shape).astype(ns_matmul_dtype)
 
-        # Iterate with cycling coefficients
+        if X.ndim == 3:
+            ns_step_fn = Muon._batched_newton_schulz_step
+        else:
+            ns_step_fn = Muon._newton_schulz_step
+
         for i in range(steps):
             a, b, c = coeff_sets[i % len(coeff_sets)]
-            A = paddle.matmul(X, X, transpose_y=True)
-            B = paddle.addmm(input=A, x=A, y=A, beta=b, alpha=c)
-            X = paddle.addmm(input=X, x=B, y=X, beta=a, alpha=1.0)
+            X = ns_step_fn(X, a, b, c)
 
-        return X.T if transpose else X
+        if transpose:
+            X = paddle.transpose(X, perm=[1, 0] if X.ndim == 2 else [0, 2, 1])
+        return X
+
+    @staticmethod
+    def _newton_schulz_step(X, a, b, c):
+        """Single Newton-Schulz iteration step for 2D input."""
+        A = paddle.matmul(X, X, transpose_y=True)
+        B = paddle.addmm(input=A, x=A, y=A, beta=b, alpha=c)
+        X = paddle.addmm(input=X, x=B, y=X, beta=a, alpha=1.0)
+        return X
+
+    @staticmethod
+    def _batched_newton_schulz_step(X, a, b, c):
+        """Single Newton-Schulz iteration step for 3D batched input."""
+        A = paddle.matmul(X, X, transpose_y=True)
+        B = paddle.baddbmm(A, A, A, beta=b, alpha=c)
+        X = paddle.baddbmm(X, B, X, beta=a, alpha=1.0)
+        return X
 
     @staticmethod
     def _scaling_fn(orthogonal_update, version, extra_scale_factor=1.0):
         """Apply dimension-dependent scaling to the orthogonal update."""
-        din, dout = orthogonal_update.shape[0], orthogonal_update.shape[1]
+        din, dout = orthogonal_update.shape[-2], orthogonal_update.shape[-1]
         if version == 1:
             scale = max(1, dout / din) ** 0.5
         elif version == 2:
@@ -473,12 +532,10 @@ class Muon(Optimizer):
             False,  # amsgrad
         )
 
-    def _muon_update(
+    def _muon_update_group(
         self,
-        param,
-        grad,
+        group_params_grads,
         lr,
-        momentum_buffer,
         momentum_beta,
         ns_steps,
         nesterov,
@@ -486,45 +543,59 @@ class Muon(Optimizer):
         weight_decay,
         version,
     ):
-        """In-place Muon update for a 2D parameter tensor.
+        """Batched Muon update for a group of parameters with identical shape and split_concat_func."""
+        # Because shape is identical, use the first param's properties
+        param0, _ = group_params_grads[0]
+        param_shape = getattr(param0, "original_shape", param0.shape)
+        is_3d = len(param_shape) == 3
 
-        Applies Newton-Schulz orthogonalisation to the 2D weight matrix and
-        updates the parameter in-place. MuonShardingOptimizer assigns whole
-        2D tensors to ranks, so no sharding gather or TP communication is needed.
-        """
-        param_shape = getattr(param, "original_shape", param.shape)
-        param_info = self._muon_param_info_map.get(param.name)
+        param_info = self._muon_param_info_map.get(param0.name)
+        split_concat_func = param_info.split_concat_func if param_info else None
+
+        matrix_2d_list = []
+        find_master_list = []
 
         with paddle.no_grad():
-            grad_f32 = (
-                grad.astype(momentum_buffer.dtype)
-                if grad.dtype != momentum_buffer.dtype
-                else grad
-            )
+            # --- Pass 1: Sequential momentum update & preparation ---
+            for param, grad in group_params_grads:
+                momentum_buffer = self._get_accumulator(
+                    self._moment_acc_str, param
+                )
+                grad_f32 = (
+                    grad.astype(momentum_buffer.dtype)
+                    if grad.dtype != momentum_buffer.dtype
+                    else grad
+                )
 
-            # Step 1: Momentum update
-            new_momentum = paddle.lerp(
-                momentum_buffer, grad_f32, 1.0 - momentum_beta
-            )
-            paddle.assign(new_momentum, momentum_buffer)
-            update_buffer = (
-                paddle.lerp(grad_f32, momentum_buffer, momentum_beta)
-                if nesterov
-                else momentum_buffer
-            )
+                new_momentum = paddle.lerp(
+                    momentum_buffer, grad_f32, 1.0 - momentum_beta
+                )
+                paddle.assign(new_momentum, momentum_buffer)
+                update_buffer = (
+                    paddle.lerp(grad_f32, momentum_buffer, momentum_beta)
+                    if nesterov
+                    else momentum_buffer
+                )
 
-            # Step 2: Reshape update buffer to 2D matrix.
-            # MuonShardingOptimizer assigns whole 2D tensors to ranks, so params
-            # are already 2D/3D (no sharding gather needed).
-            matrix_2d_global = update_buffer.reshape(param_shape)
+                matrix_2d_global = update_buffer.reshape(param_shape)
+                matrix_2d_list.append(matrix_2d_global)
+                find_master_list.append(param.name in self._master_weights)
 
-            # Shared NS + scaling closure (captures ns_steps, epsilon, version, ns_coeff_type)
+            # --- Pass 2: Batched Newton-Schulz iteration ---
+            if len(matrix_2d_list) > 1:
+                if is_3d:
+                    batched_matrix = paddle.concat(matrix_2d_list, axis=0)
+                else:
+                    batched_matrix = paddle.stack(matrix_2d_list, axis=0)
+            else:
+                batched_matrix = matrix_2d_list[0]
+
             def ortho_fn(m):
                 ns_out = Muon._zeropower_via_newtonschulz5(
                     m,
                     steps=ns_steps,
                     eps=epsilon,
-                    ns_coeff_type=self._ns_coeff_type,
+                    ns_coeffs=self._ns_coeffs,
                     ns_matmul_dtype=self._ns_matmul_dtype,
                 )
                 scaled = Muon._scaling_fn(
@@ -532,53 +603,74 @@ class Muon(Optimizer):
                 )
                 return scaled
 
-            # Step 3: Newton-Schulz orthogonalisation
-            # Use split_concat_func from param_info if provided, otherwise default to whole matrix
-            if (
-                param_info is not None
-                and param_info.split_concat_func is not None
-            ):
-                # Use slice function defined in model configuration
-                orthogonal_update = param_info.split_concat_func(
-                    matrix_2d_global, ortho_fn
+            if split_concat_func is not None:
+                batched_orthogonal_update = split_concat_func(
+                    batched_matrix, ortho_fn
                 )
                 if MUON_DEBUG:
                     _global_rank = paddle.distributed.get_rank()
                     if _global_rank == 0:
-                        _sf = param_info.split_concat_func
+                        _sf = split_concat_func
+                        # split_concat_func may be a plain function or a
+                        # functools.partial; unwrap for readable logging.
+                        _fn = getattr(_sf, "func", _sf)
                         _logger.info(
-                            f"[Muon] Using split_concat_func: param={param.name}, "
-                            f"split_concat_func={_sf.func.__name__}, "
-                            f"args={_sf.args}, kwargs={_sf.keywords}"
+                            f"[Muon] Using split_concat_func: "
+                            f"params={[p.name for p, _ in group_params_grads]}, "
+                            f"split_concat_func={_fn.__name__}, "
+                            f"args={getattr(_sf, 'args', ())}, "
+                            f"kwargs={getattr(_sf, 'keywords', None)}"
                         )
             else:
-                # Default: whole matrix orthogonalisation
-                orthogonal_update = ortho_fn(matrix_2d_global)
+                batched_orthogonal_update = ortho_fn(batched_matrix)
 
-            find_master = param.name in self._master_weights
-            master_weight = (
-                self._master_weights[param.name] if find_master else None
-            )
-
-            with_decay = True
-            if (
-                self._apply_decay_param_fun is not None
-                and not self._apply_decay_param_fun(param.name)
-            ):
-                with_decay = False
-            if with_decay and weight_decay > 0:
-                if find_master:
-                    master_weight.scale_(1.0 - lr * weight_decay)
+            # Unbatch results
+            if len(matrix_2d_list) > 1:
+                if is_3d:
+                    orthogonal_updates = paddle.split(
+                        batched_orthogonal_update,
+                        num_or_sections=len(matrix_2d_list),
+                        axis=0,
+                    )
                 else:
-                    param.scale_(1.0 - lr * weight_decay)
-
-            final_step = orthogonal_update * lr
-
-            if find_master:
-                master_weight.subtract_(final_step)
-                paddle.assign(master_weight.astype(param.dtype), param)
+                    orthogonal_updates = paddle.unbind(
+                        batched_orthogonal_update, axis=0
+                    )
             else:
-                param.subtract_(final_step.astype(param.dtype))
+                orthogonal_updates = [batched_orthogonal_update]
+
+            # --- Pass 3: Sequential apply weight decay & step ---
+            for i, (param, _) in enumerate(group_params_grads):
+                orthogonal_update = orthogonal_updates[i]
+                find_master = find_master_list[i]
+                master_weight = (
+                    self._master_weights[param.name] if find_master else None
+                )
+
+                lr_ratio = (
+                    1.0 if self._lr_ratio is None else self._lr_ratio(param)
+                )
+                effective_lr = lr * lr_ratio
+
+                with_decay = True
+                if (
+                    self._apply_decay_param_fun is not None
+                    and not self._apply_decay_param_fun(param.name)
+                ):
+                    with_decay = False
+                if with_decay and weight_decay > 0:
+                    if find_master:
+                        master_weight.scale_(1.0 - effective_lr * weight_decay)
+                    else:
+                        param.scale_(1.0 - effective_lr * weight_decay)
+
+                final_step = orthogonal_update * effective_lr
+
+                if find_master:
+                    master_weight.subtract_(final_step)
+                    paddle.assign(master_weight.astype(param.dtype), param)
+                else:
+                    param.subtract_(final_step.astype(param.dtype))
 
     # ------------------------------------------------------------------
     # Core optimization step
@@ -589,6 +681,10 @@ class Muon(Optimizer):
             raise NotImplementedError(
                 "Muon optimizer only supports dygraph mode."
             )
+
+        # Same bypass as the base Optimizer._apply_optimize: skip all parameter updates.
+        if g_shard_bypass_dygraph_optimizer:
+            return
 
         if self._grad_clip is not None:
             params_grads = self._grad_clip(params_grads)
@@ -609,10 +705,18 @@ class Muon(Optimizer):
                 continue
 
             param_info = self._muon_param_info_map.get(param.name)
-            assert param_info is not None, (
-                f"muon_param_info_map does not have {param.name}"
-            )
-            use_muon = param_info.use_muon
+            if param_info is not None:
+                use_muon = param_info.use_muon
+            else:
+                use_muon = _default_should_use_muon(
+                    param.name,
+                    getattr(param, "original_shape", param.shape),
+                    self._muon_exclude_patterns,
+                )
+                _logger.warning(
+                    f"muon_param_info_map does not have {param.name}, "
+                    f"falling back to default rule: use_muon={use_muon}"
+                )
 
             self._ensure_accumulators(param, use_muon, group)
             if use_muon:
@@ -620,14 +724,44 @@ class Muon(Optimizer):
             else:
                 adamw_params.append((param, grad))
 
-        # --- Pass 1: Muon updates (large temporary tensors) ---
+        # --- Pass 2: Muon updates ---
         lr_tensor = paddle.to_tensor(lr, dtype=paddle.float32)
+        lr_tensor_f64 = paddle.to_tensor(lr, dtype=paddle.float64)
+
+        # Group parameters by split_concat_func and shape, then update
+        # each group in one batched call.
+        muon_groups = defaultdict(list)
         for param, grad in muon_params:
-            self._muon_update(
-                param,
-                grad,
+            assert len(param.shape) == 2 or len(param.shape) == 3, (
+                "Muon only supports 2D or 3D parameters."
+            )
+            param_shape = getattr(param, "original_shape", param.shape)
+            param_info = self._muon_param_info_map.get(param.name)
+
+            func_key = None
+            if param_info and param_info.split_concat_func is not None:
+                func = param_info.split_concat_func
+                if hasattr(func, "func"):
+                    # functools.partial: group by the underlying function
+                    # object plus all bound args/kwargs.
+                    func_key = (
+                        func.func,
+                        tuple(_to_hashable(v) for v in func.args),
+                        tuple(
+                            (k, _to_hashable(v))
+                            for k, v in sorted((func.keywords or {}).items())
+                        ),
+                    )
+                else:
+                    func_key = func
+
+            key = (func_key, tuple(param_shape))
+            muon_groups[key].append((param, grad))
+
+        for key, group_params in muon_groups.items():
+            self._muon_update_group(
+                group_params,
                 lr_tensor,
-                self._get_accumulator(self._moment_acc_str, param),
                 group.get("momentum", 0.95),
                 group.get("ns_steps", 5),
                 group.get("nesterov", True),
@@ -636,12 +770,12 @@ class Muon(Optimizer):
                 version=group.get("muon_version", 3),
             )
 
-        # --- Pass 2: AdamW updates ---
+        # --- Pass 3: AdamW updates ---
         for param, grad in adamw_params:
             self._adamw_update(
                 param,
                 grad,
-                lr_tensor,
+                lr_tensor_f64,
                 self._get_accumulator(self._moment_acc_str, param),
                 self._get_accumulator(self._moment2_acc_str, param),
                 self._get_accumulator(self._beta1_pow_acc_str, param),

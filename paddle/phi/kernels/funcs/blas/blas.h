@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "paddle/phi/common/bfloat16.h"
 #include "paddle/phi/core/dense_tensor.h"
 
 #ifdef PADDLE_WITH_MKLML
@@ -110,6 +111,17 @@ class Blas {
             const T* B,
             U beta,
             T* C) const;
+
+  void GEMM(CBLAS_TRANSPOSE transA,
+            CBLAS_TRANSPOSE transB,
+            int64_t M,
+            int64_t N,
+            int64_t K,
+            float alpha,
+            const phi::bfloat16* A,
+            const phi::bfloat16* B,
+            float beta,
+            float* C) const;
 
   template <typename T>
   void GEMM(bool transA,
@@ -276,9 +288,6 @@ class Blas {
   void VDIV(int n, const T* x, const T* y, T* z) const;
 
   template <typename T>
-  void VCOPY(int n, const T* x, T* y) const;
-
-  template <typename T>
   void VEXP(int n, const T* x, T* y) const;
 
   template <typename T>
@@ -303,9 +312,6 @@ class Blas {
   template <typename T>
   void CUDOT(
       int n, const T* x, int incx, const T* y, int incy, T* result) const;
-
-  template <typename T>
-  void SCAL(int n, const T a, T* x) const;
 
   template <typename T>
   T ASUM(int n, T* x, int inc) const;
@@ -564,11 +570,6 @@ class BlasT : private Blas<DeviceContext> {
   }
 
   template <typename... ARGS>
-  void VCOPY(ARGS... args) const {
-    Base()->template VCOPY<T>(args...);
-  }
-
-  template <typename... ARGS>
   void VEXP(ARGS... args) const {
     Base()->template VEXP<T>(args...);
   }
@@ -596,11 +597,6 @@ class BlasT : private Blas<DeviceContext> {
   template <typename... ARGS>
   void CUDOT(ARGS... args) const {
     Base()->template CUDOT<T>(args...);
-  }
-
-  template <typename... ARGS>
-  void SCAL(ARGS... args) const {
-    Base()->template SCAL<T>(args...);
   }
 
   template <typename... ARGS>

@@ -81,9 +81,9 @@ struct FusedAdamFunctor {
       MT beta2,
       FusedAdamBetaPowInfo<T, IsCPUBetaPow> beta_pow,
       MT epsilon,
-      const MT* learning_rate,
+      const double* learning_rate,
       MT decay) const {
-    MT lr = *learning_rate;
+    MT lr = static_cast<MT>(*learning_rate);
     MT beta1_pow = beta_pow.GetBeta1PowValue();
     MT beta2_pow = beta_pow.GetBeta2PowValue();
     T* __restrict__ p_ptr;
@@ -99,7 +99,7 @@ struct FusedAdamFunctor {
       t_info.GetChunkIdAndTensorId(&chunk_id, &tensor_id);
 
       n = t_info.sizes[tensor_id];
-      int offset = chunk_id * chunk_size;
+      int64_t offset = static_cast<int64_t>(chunk_id) * chunk_size;
       g_ptr = static_cast<const T*>(t_info.grads[tensor_id]) + offset;
       p_ptr = static_cast<T*>(t_info.tensor_addrs[0][tensor_id]) + offset;
       mom1_ptr = static_cast<MT*>(t_info.tensor_addrs[1][tensor_id]) + offset;
@@ -441,7 +441,7 @@ PADDLE_API void FusedAdamKernel(
         beta2_tmp,                                                           \
         beta_pow_info,                                                       \
         epsilon.to<MT>(),                                                    \
-        learning_rate.data<MT>(),                                            \
+        learning_rate.data<double>(),                                        \
         static_cast<MT>(weight_decay));                                      \
   } while (0)
 
@@ -588,6 +588,7 @@ PD_REGISTER_KERNEL(fused_adam,
                    float,
                    double) {
   // Skip beta1_pow, beta2_pow, skip_update data transform
+  kernel->InputAt(2).SetDataType(phi::DataType::FLOAT64);  // learning_rate
   kernel->InputAt(6).SetBackend(phi::Backend::ALL_BACKEND);
   kernel->InputAt(7).SetBackend(phi::Backend::ALL_BACKEND);
   kernel->InputAt(9).SetBackend(phi::Backend::ALL_BACKEND);
